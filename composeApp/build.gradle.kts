@@ -1,10 +1,10 @@
+import org.gradle.kotlin.dsl.implementation
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
-    alias(libs.plugins.kotlinMultiplatform) // Or "org.jetbrains.kotlin.multiplatform"
-    alias(libs.plugins.composeMultiplatform) // Or "org.jetbrains.compose" if it's a Compose Multiplatform module
-    // If this module also directly builds an Android library/app, you might need:
-     alias(libs.plugins.androidLibrary) // or androidApplication
+    alias(libs.plugins.kotlinMultiplatform)
+    alias(libs.plugins.composeMultiplatform)
+    alias(libs.plugins.androidLibrary)
     alias(libs.plugins.composeCompiler)
 }
 
@@ -35,32 +35,38 @@ kotlin {
             implementation(compose.components.resources)
             implementation(compose.materialIconsExtended)
         }
-    }
-}
-
-android {
-    namespace = "com.example.kmpbottomnav"
-    compileSdk = 36
-
-    sourceSets["main"].manifest.srcFile("src/androidMain/AndroidManifest.xml")
-    sourceSets["main"].res.srcDirs("src/androidMain/res")
-
-    defaultConfig {
-        minSdk = 24
-        targetSdk = 34
-    }
-    compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_1_8
-        targetCompatibility = JavaVersion.VERSION_1_8
+        androidMain.dependencies {
+            implementation(compose.uiTooling)
+            implementation(libs.androidx.ui.tooling.preview)
+        }
     }
 
-    buildFeatures {
-        compose = true // Enable Compose for the Android part
-    }
 
-    packaging {
-        resources {
-            excludes += "/META-INF/{AL2.0,LGPL2.1}"
+    android {
+        namespace = "com.example.kmpbottomnav"
+        compileSdk = 36
+
+        sourceSets["main"].manifest.srcFile("src/androidMain/AndroidManifest.xml")
+        sourceSets["main"].res.srcDirs("src/androidMain/res")
+
+        defaultConfig {
+            minSdk = 24
+            targetSdk = 34
+        }
+        compileOptions {
+            sourceCompatibility = JavaVersion.VERSION_1_8
+            targetCompatibility = JavaVersion.VERSION_1_8
+        }
+
+        buildFeatures {
+            compose = true // Enable Compose for the Android part
+        }
+
+        packaging {
+            resources {
+                excludes += "/META-INF/{AL2.0,LGPL2.1}"
+            }
         }
     }
 }
+
