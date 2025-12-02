@@ -34,10 +34,26 @@ kotlin {
             implementation(compose.ui)
             implementation(compose.components.resources)
             implementation(compose.materialIconsExtended)
+            // Image picker bundle
+            implementation(libs.bundles.image.picker)
+            // Permissions bundle
+            implementation(libs.bundles.permissions)
+
+            // Ktor bundle for networking
+            implementation(libs.bundles.ktor.common)
+            implementation(libs.kotlinx.serialization.json)
+
+            implementation(libs.bundles.networking)
+            implementation(libs.bundles.image.handling)
         }
         androidMain.dependencies {
             implementation(compose.uiTooling)
             implementation(libs.androidx.ui.tooling.preview)
+            implementation(libs.ktor.client.okhttp)
+            implementation(libs.bundles.camera)
+        }
+        iosMain.dependencies {
+            implementation(libs.ktor.client.darwin)
         }
     }
 
