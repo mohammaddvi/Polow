@@ -30,6 +30,3 @@ dependencyResolutionManagement {
 
 include(":composeApp")
 include(":androidApp")
-include(":core")
-include(":onboarding")
-include(":onboarding")

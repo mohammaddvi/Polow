@@ -32,7 +32,6 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -49,6 +48,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.preat.peekaboo.image.picker.SelectionMode
 import com.preat.peekaboo.image.picker.rememberImagePickerLauncher
+import dev.icerock.moko.permissions.Permission
+import dev.icerock.moko.permissions.compose.BindEffect
+import dev.icerock.moko.permissions.compose.rememberPermissionsControllerFactory
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -60,26 +63,37 @@ fun LiveCameraScanScreen(
     val viewModel = remember { LiveCameraViewModel() }
     val uiState by viewModel.uiState.collectAsState()
     val capturedImage by viewModel.capturedImage.collectAsState()
-
     val coroutineScope = rememberCoroutineScope()
     var newIngredient by remember { mutableStateOf("") }
 
-    // Handle permission and camera startup
-    LaunchedEffect(Unit) {
-        viewModel.startCamera()
+    val factory = rememberPermissionsControllerFactory()
+    val controller = remember(factory){
+        factory.createPermissionsController()
     }
 
-    // Handle cleanup
-    DisposableEffect(viewModel) {
-        onDispose {
-            viewModel.onCleared()
+    var isPermissionGranted by remember { mutableStateOf(false) }
+
+    // Check for permission when the screen is first launched
+    LaunchedEffect(Unit) {
+        val hasPermission = controller.isPermissionGranted(Permission.CAMERA)
+        if (hasPermission) {
+            isPermissionGranted = true
         }
     }
 
-    // Handle captured image
+    BindEffect(controller)
+
+    LaunchedEffect(isPermissionGranted) {
+        if (isPermissionGranted) {
+            viewModel.onCameraReady()
+        }
+    }
+
+    // Handle captured image - upload automatically
     LaunchedEffect(capturedImage) {
         capturedImage?.let { image ->
             onPhotoCaptured(image)
+            // Image upload is handled automatically in ViewModel.capturePhoto()
         }
     }
 
@@ -88,7 +102,11 @@ fun LiveCameraScanScreen(
         selectionMode = SelectionMode.Multiple(maxSelection = 10),
         scope = coroutineScope,
         onResult = { byteArrays ->
-            onGallerySelected(byteArrays)
+            if (byteArrays.isNotEmpty()) {
+                onGallerySelected(byteArrays)
+                // Upload the first selected image
+                viewModel.uploadImageFromGallery(byteArrays.first())
+            }
         }
     )
 
@@ -97,38 +115,20 @@ fun LiveCameraScanScreen(
             .fillMaxSize()
             .background(Color.Black)
     ) {
-        when {
-            !uiState.permissionGranted -> {
-                // Permission request screen
-                PermissionRequestScreen(
-                    onPermissionGranted = { viewModel.onPermissionGranted() }
-                )
-            }
-
-            uiState.isCameraActive -> {
-                // Live camera preview
-                CameraPreviewView(
-                    cameraManager = viewModel.cameraManager,
-                    modifier = Modifier.fillMaxSize()
-                )
-            }
-
-            else -> {
-                // Loading state
-                Box(
-                    modifier = Modifier.fillMaxSize(),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(16.dp)
-                    ) {
-                        CircularProgressIndicator(color = Color.White)
-                        Text(
-                            text = "Starting camera...",
-                            color = Color.White,
-                            fontSize = 16.sp
-                        )
+        if (isPermissionGranted) {
+            CameraPreviewView(
+                cameraManager = viewModel.cameraManager,
+                modifier = Modifier.fillMaxSize()
+            )
+        } else {
+            PermissionRequestScreen {
+                coroutineScope.launch {
+                    try {
+                        controller.providePermission(Permission.CAMERA)
+                        isPermissionGranted = true
+                    } catch (e: Exception) {
+                        controller.openAppSettings()
+                        // Handle permission denial if needed
                     }
                 }
             }
@@ -168,13 +168,9 @@ fun LiveCameraScanScreen(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
-                // Scan Button - This captures the photo
+                // Scan Button
                 Button(
-                    onClick = {
-                        if (!uiState.isCapturing) {
-                            viewModel.capturePhoto()
-                        }
-                    },
+                    onClick = { viewModel.capturePhoto() },
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(56.dp),
@@ -223,9 +219,7 @@ fun LiveCameraScanScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     // Gallery Button
-                    TextButton(
-                        onClick = { galleryLauncher.launch() }
-                    ) {
+                    TextButton(onClick = { galleryLauncher.launch() }) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -247,13 +241,7 @@ fun LiveCameraScanScreen(
                     OutlinedTextField(
                         value = newIngredient,
                         onValueChange = { newIngredient = it },
-                        placeholder = {
-                            Text(
-                                text = "type ingredient",
-                                color = Color(0xFF9CA3AF),
-                                fontSize = 14.sp
-                            )
-                        },
+                        placeholder = { Text("type ingredient", color = Color(0xFF9CA3AF)) },
                         modifier = Modifier
                             .weight(1f)
                             .padding(horizontal = 16.dp),
@@ -269,7 +257,7 @@ fun LiveCameraScanScreen(
                     IconButton(
                         onClick = {
                             if (newIngredient.isNotBlank()) {
-                                // Add ingredient manually
+                                viewModel.addIngredient(newIngredient.trim())
                                 newIngredient = ""
                             }
                         },
@@ -292,12 +280,10 @@ fun LiveCameraScanScreen(
         }
 
         // Capture Success Indicator
-        if (uiState.captureSuccess) {
+        if (uiState.captureSuccess && !uiState.isUploading) {
             LaunchedEffect(Unit) {
-                // Flash effect or success animation
-                kotlinx.coroutines.delay(200) // Brief flash effect
+                kotlinx.coroutines.delay(200)
             }
-
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -305,9 +291,7 @@ fun LiveCameraScanScreen(
                 contentAlignment = Alignment.Center
             ) {
                 Card(
-                    colors = CardDefaults.cardColors(
-                        containerColor = Color(0xFFE91E63)
-                    ),
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFFE91E63)),
                     shape = CircleShape
                 ) {
                     Icon(
@@ -321,13 +305,71 @@ fun LiveCameraScanScreen(
                 }
             }
         }
+
+        // Loading indicator during upload
+        if (uiState.isUploading) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.5f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    CircularProgressIndicator(
+                        color = Color(0xFFE91E63)
+                    )
+                    Text(
+                        text = "Analyzing image...",
+                        color = Color.White,
+                        fontSize = 16.sp
+                    )
+                }
+            }
+        }
+
+        // Error message
+        uiState.error?.let { error ->
+            LaunchedEffect(error) {
+                kotlinx.coroutines.delay(3000)
+                viewModel.clearError()
+            }
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = 100.dp)
+            ) {
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFFDC2626)),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Text(
+                        text = error,
+                        color = Color.White,
+                        modifier = Modifier.padding(16.dp),
+                        fontSize = 14.sp
+                    )
+                }
+            }
+        }
+
+        // Ingredients Bottom Sheet
+        if (uiState.showIngredientsSheet) {
+            IngredientsBottomSheet(
+                ingredients = uiState.ingredients,
+                onDismiss = { viewModel.hideIngredientsSheet() },
+                onAddIngredient = { name -> viewModel.addIngredient(name) },
+                onRemoveIngredient = { id -> viewModel.removeIngredient(id) },
+                onNext = { viewModel.onNext() }
+            )
+        }
     }
 }
 
 @Composable
-private fun PermissionRequestScreen(
-    onPermissionGranted: () -> Unit
-) {
+private fun PermissionRequestScreen(onGrantPermission: () -> Unit) {
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -344,26 +386,21 @@ private fun PermissionRequestScreen(
                 tint = Color.White,
                 modifier = Modifier.size(64.dp)
             )
-
             Text(
                 text = "Camera Permission Required",
                 color = Color.White,
                 fontSize = 20.sp,
                 fontWeight = FontWeight.Bold
             )
-
             Text(
                 text = "This app needs camera access to scan ingredients",
                 color = Color.White.copy(alpha = 0.8f),
                 fontSize = 16.sp,
                 textAlign = TextAlign.Center
             )
-
             Button(
-                onClick = onPermissionGranted,
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = Color(0xFFE91E63)
-                )
+                onClick = onGrantPermission,
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE91E63))
             ) {
                 Text("Grant Permission")
             }
@@ -394,7 +431,6 @@ fun RecipeFlowScreen() {
                 }
             )
         }
-
         "ingredients" -> {
             // Your ingredients list screen
             // Pass capturedImageData to process

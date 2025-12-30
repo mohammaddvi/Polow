@@ -6,6 +6,7 @@ plugins {
     alias(libs.plugins.composeMultiplatform)
     alias(libs.plugins.androidLibrary)
     alias(libs.plugins.composeCompiler)
+    alias(libs.plugins.kotlinxSerialization)
 }
 
 kotlin {
@@ -28,6 +29,8 @@ kotlin {
 
     sourceSets {
         commonMain.dependencies {
+            implementation(libs.moko.permissions.compose) // Add this line
+            implementation(libs.moko.permissions)
             implementation(compose.runtime)
             implementation(compose.foundation)
             implementation(compose.material3)
